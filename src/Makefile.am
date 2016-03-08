@@ -31,6 +31,9 @@ AM_CFLAGS =
 redshift_LDADD = @LIBINTL@
 EXTRA_DIST =
 
+AM_CFLAGS += $(DBUS_CFLAGS)
+redshift_LDADD += $(DBUS_LIBS)
+
 if ENABLE_DRM
 redshift_SOURCES += gamma-drm.c gamma-drm.h
 AM_CFLAGS += $(DRM_CFLAGS)

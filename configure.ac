@@ -40,6 +40,7 @@ AC_DEFINE_UNQUOTED(GETTEXT_PACKAGE, "$GETTEXT_PACKAGE", [Package name for gettex
 
 
 PKG_CHECK_MODULES([DRM], [libdrm], [have_drm=yes], [have_drm=no])
+PKG_CHECK_MODULES([DBUS], [dbus-1], [have_dbus=yes], [have_dbus=no])
 
 PKG_CHECK_MODULES([X11], [x11], [have_x11=yes], [have_x11=no])
 PKG_CHECK_MODULES([XF86VM], [xxf86vm], [have_xf86vm=yes], [have_xf86vm=no])

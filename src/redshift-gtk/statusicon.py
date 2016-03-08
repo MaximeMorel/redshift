@@ -28,11 +28,12 @@ import fcntl
 import signal
 import re
 import gettext
+import dbus
 
 import gi
 gi.require_version('Gtk', '3.0')
 
-from gi.repository import Gtk, GLib, GObject
+from gi.repository import Gtk, Gdk, GLib, GObject
 
 try:
     gi.require_version('AppIndicator3', '0.1')
@@ -45,6 +46,11 @@ from . import utils
 
 _ = gettext.gettext
 
+def on_reply():
+    print('on_reply')
+
+def on_error():
+    print('on_reply')
 
 class RedshiftController(GObject.GObject):
     '''A GObject wrapper around the child process'''
@@ -54,7 +60,8 @@ class RedshiftController(GObject.GObject):
         'temperature-changed': (GObject.SIGNAL_RUN_FIRST, None, (int,)),
         'period-changed': (GObject.SIGNAL_RUN_FIRST, None, (str,)),
         'location-changed': (GObject.SIGNAL_RUN_FIRST, None, (float, float)),
-        'error-occured': (GObject.SIGNAL_RUN_FIRST, None, (str,))
+        'error-occured': (GObject.SIGNAL_RUN_FIRST, None, (str,)),
+        'brightness-changed': (GObject.SIGNAL_RUN_FIRST, None, (int,)),
         }
 
     def __init__(self, args):
@@ -70,6 +77,7 @@ class RedshiftController(GObject.GObject):
         self._temperature = 0
         self._period = 'Unknown'
         self._location = (0.0, 0.0)
+        self._brightness = 100
 
         # Start redshift with arguments
         args.insert(0, os.path.join(defs.BINDIR, 'redshift'))
@@ -127,6 +135,11 @@ class RedshiftController(GObject.GObject):
     def temperature(self):
         '''Current screen temperature'''
         return self._temperature
+
+    @property
+    def brightness(self):
+        '''Current screen brightness'''
+        return self._brightness
 
     @property
     def period(self):
@@ -191,6 +204,11 @@ class RedshiftController(GObject.GObject):
             if new_temperature != self._temperature:
                 self._temperature = new_temperature
                 self.emit('temperature-changed', new_temperature)
+        elif key == 'Brightness':
+            new_brightness = float(value)
+            if new_brightness != self._brightness:
+                self._brightness = new_brightness
+                self.emit('brightness-changed', new_brightness * 100.0)
         elif key == 'Period':
             new_period = value
             if new_period != self._period:
@@ -253,11 +271,13 @@ class RedshiftStatusIcon(object):
                                                         'redshift-status-on',
                                                         appindicator.IndicatorCategory.APPLICATION_STATUS)
             self.indicator.set_status(appindicator.IndicatorStatus.ACTIVE)
+            self.indicator.connect("scroll-event", self.scroll_cb)
         else:
             # Create status icon
             self.status_icon = Gtk.StatusIcon()
             self.status_icon.set_from_icon_name('redshift-status-on')
             self.status_icon.set_tooltip_text('Redshift')
+            self.status_icon.connect("scroll-event", self.scroll_cb)
 
         # Create popup menu
         self.status_menu = Gtk.Menu()
@@ -303,7 +323,7 @@ class RedshiftStatusIcon(object):
 
         # Create info dialog
         self.info_dialog = Gtk.Dialog()
-        self.info_dialog.set_title(_('Info'))
+        self.info_dialog.set_title(_('Info popux'))
         self.info_dialog.add_button(_('Close'), Gtk.ButtonsType.CLOSE)
         self.info_dialog.set_resizable(False)
         self.info_dialog.set_property('border-width', 6)
@@ -326,6 +346,12 @@ class RedshiftStatusIcon(object):
         self.info_dialog.get_content_area().pack_start(self.temperature_label, True, True, 0)
         self.temperature_label.show()
 
+        self.brightness_label = Gtk.Label()
+        self.brightness_label.set_alignment(0.0, 0.5)
+        self.brightness_label.set_padding(6, 6)
+        self.info_dialog.get_content_area().pack_start(self.brightness_label, True, True, 0)
+        self.brightness_label.show()
+
         self.period_label = Gtk.Label()
         self.period_label.set_alignment(0.0, 0.5)
         self.period_label.set_padding(6, 6)
@@ -340,12 +366,14 @@ class RedshiftStatusIcon(object):
         self._controller.connect('temperature-changed', self.temperature_change_cb)
         self._controller.connect('location-changed', self.location_change_cb)
         self._controller.connect('error-occured', self.error_occured_cb)
+        self._controller.connect('brightness-changed', self.brightness_change_cb)
 
         # Set info box text
         self.change_inhibited(self._controller.inhibited)
         self.change_period(self._controller.period)
         self.change_temperature(self._controller.temperature)
         self.change_location(self._controller.location)
+        self.change_brightness(self._controller.brightness)
 
         if appindicator:
             self.status_menu.show_all()
@@ -360,6 +388,28 @@ class RedshiftStatusIcon(object):
 
         # Initialize suspend timer
         self.suspend_timer = None
+
+    def set_dbus_brightness(self, val):
+        session_bus = dbus.SessionBus()
+        try:
+            dbusProxy = session_bus.get_object('dk.jonls.redshift', '/dk/jonls/redshift')
+            dbusInterface = dbus.Interface(dbusProxy, 'dk.jonls.redshift')
+            dbusInterface.setBrightness(val, reply_handler=on_reply, error_handler=on_error)
+        except dbus.DBusException as err:
+            print("DBus error: ", err)
+            pass
+
+    def scroll_cb(self, aai, ind, steps):
+        #print(steps)
+        val = 0
+        if steps == Gdk.ScrollDirection.UP:
+            print("UP")
+            val = 1
+        elif steps == Gdk.ScrollDirection.DOWN:
+            print("DOWN")
+            val = 1
+        if val != 0:
+            self.set_dbus_brightness(val)
 
     def remove_suspend_timer(self):
         '''Disable any previously set suspend timer'''
@@ -450,6 +500,10 @@ class RedshiftStatusIcon(object):
         '''Callback when controller changes temperature'''
         self.change_temperature(temperature)
 
+    def brightness_change_cb(self, controller, brightness):
+        '''Callback when controller changes brightness'''
+        self.change_brightness(brightness)
+
     def location_change_cb(self, controller, lat, lon):
         '''Callback when controlled changes location'''
         self.change_location((lat, lon))
@@ -474,6 +528,10 @@ class RedshiftStatusIcon(object):
     def change_temperature(self, temperature):
         '''Change interface to new temperature'''
         self.temperature_label.set_markup('<b>{}:</b> {}K'.format(_('Color temperature'), temperature))
+
+    def change_brightness(self, brightness):
+        '''Change interface to new brightness'''
+        self.brightness_label.set_markup('<b>{}:</b> {}%'.format(_('Brightness'), brightness))
 
     def change_period(self, period):
         '''Change interface to new period'''

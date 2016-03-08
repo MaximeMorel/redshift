@@ -28,6 +28,7 @@
 #include <math.h>
 #include <locale.h>
 #include <errno.h>
+#include <dbus/dbus.h>
 
 #if defined(HAVE_SIGNAL_H) && !defined(__WIN32__)
 # include <signal.h>
@@ -289,8 +290,13 @@ static const location_provider_t location_providers[] = {
 #define TRANSITION_HIGH    3.0
 
 /* Duration of sleep between screen updates (milliseconds). */
-#define SLEEP_DURATION        5000
+#define SLEEP_DURATION        500
 #define SLEEP_DURATION_SHORT  100
+
+typedef struct {
+	DBusConnection* connection;
+	const char* busName;
+} dbus_context_t;
 
 /* Program modes. */
 typedef enum {
@@ -779,7 +785,8 @@ run_continual_mode(const location_t *loc,
 		   const transition_scheme_t *scheme,
 		   const gamma_method_t *method,
 		   gamma_state_t *state,
-		   int transition, int verbose)
+		   int transition, int verbose,
+		   dbus_context_t* dbusCtx)
 {
 	int r;
 
@@ -850,6 +857,9 @@ run_continual_mode(const location_t *loc,
 			}
 			exiting = 0;
 		}
+
+		int checkDBus(dbus_context_t* dbusCtx);
+		checkDBus(dbusCtx);
 
 		/* Read timestamp */
 		double now;
@@ -965,6 +975,134 @@ run_continual_mode(const location_t *loc,
 	return 0;
 }
 
+int initDBus(dbus_context_t* dbusCtx)
+{
+	DBusError error;
+
+	dbusCtx->busName = "dk.jonls.redshift";
+	dbus_error_init(&error);
+	dbusCtx->connection = dbus_bus_get(DBUS_BUS_SESSION, &error);
+	if (dbus_error_is_set(&error))
+	{
+		printf("Error connecting to the daemon bus: %s", error.message);
+		dbus_error_free(&error);
+		return 1;
+	}
+
+	dbus_bool_t ret = dbus_bus_name_has_owner(dbusCtx->connection, dbusCtx->busName, &error);
+	if (dbus_error_is_set(&error))
+	{
+		dbus_error_free(&error);
+		printf("DBus Error: %s\n",error.message);
+		return 1;
+	}
+
+	if (ret == FALSE)
+	{
+		printf("Bus name %s doesn't have an owner, reserving it...\n", dbusCtx->busName);
+		int request_name_reply = dbus_bus_request_name(dbusCtx->connection, dbusCtx->busName, DBUS_NAME_FLAG_DO_NOT_QUEUE, &error);
+		if (dbus_error_is_set(&error))
+		{
+			dbus_error_free(&error);
+			printf("Error requesting a bus name: %s\n",error.message);
+			return 1;
+		}
+		if (request_name_reply == DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER)
+		{
+			printf("Bus name %s Successfully reserved!\n", dbusCtx->busName);
+			return 0;
+		}
+		else
+		{
+			printf("Failed to reserve name %s\n",dbusCtx->busName);
+			return 1;
+		}
+	}
+	else
+	/* if ret of method dbus_bus_name_has_owner is TRUE, then this is useful for
+	detecting if your application is already running and had reserved a bus name
+	unless somebody stole this name from you, so better to choose a correct bus name */
+	{
+		printf("%s is already reserved\n", dbusCtx->busName);
+		return 1;
+	}
+	return 0;
+}
+
+transition_scheme_t* gScheme = NULL;
+
+void dbusSetBrightness(DBusMessage* msg, DBusConnection* conn)
+{
+	//DBusMessage* reply;
+	DBusMessageIter args;
+	//int stat = 1;
+	//dbus_uint32_t level = 21614;
+	//dbus_uint32_t serial = 0;
+	int param = 0;
+
+	// read the arguments
+	if (!dbus_message_iter_init(msg, &args))
+		fprintf(stderr, "Message has no arguments!\n"); 
+	else if (DBUS_TYPE_INT32 != dbus_message_iter_get_arg_type(&args)) 
+		fprintf(stderr, "Argument is not string!\n"); 
+	else 
+		dbus_message_iter_get_basic(&args, &param);
+
+	/*// create a reply from the message
+	reply = dbus_message_new_method_return(msg);
+
+	// add the arguments to the reply
+	dbus_message_iter_init_append(reply, &args);
+	if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_BOOLEAN, &stat)) { 
+		fprintf(stderr, "Out Of Memory!\n"); 
+		exit(1);
+	}
+	if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_UINT32, &level)) { 
+		fprintf(stderr, "Out Of Memory!\n"); 
+		exit(1);
+	}
+
+	// send the reply && flush the connection
+	if (!dbus_connection_send(conn, reply, &serial)) {
+		fprintf(stderr, "Out Of Memory!\n"); 
+		exit(1);
+	}
+	dbus_connection_flush(conn);
+
+	// free the reply
+	dbus_message_unref(reply);*/
+	printf("val: %d\n", param);
+
+	gScheme->day.brightness += param * 0.01f;
+	gScheme->night.brightness += param * 0.01f;
+}
+
+int checkDBus(dbus_context_t* dbusCtx)
+{
+	int val = -1;
+	// non blocking read of the next available message
+	if (dbus_connection_read_write(dbusCtx->connection, 10))
+	{
+		DBusMessage* msg = dbus_connection_pop_message(dbusCtx->connection);
+		if (msg)
+		{
+			// check this is a method call for the right interface & method
+			if (dbus_message_is_method_call(msg, dbusCtx->busName, "setBrightness"))
+				dbusSetBrightness(msg, dbusCtx->connection);
+
+			// free the message
+			dbus_message_unref(msg);
+		}
+	}
+	return val;
+}
+
+int exitDBus(dbus_context_t* dbusCtx)
+{
+	//dbus_connection_close(dbusCtx->connection);
+	return 0;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -987,6 +1125,7 @@ main(int argc, char *argv[])
 	   Initialized to indicate that the values are not set yet. */
 	transition_scheme_t scheme =
 		{ TRANSITION_HIGH, TRANSITION_LOW };
+	gScheme = &scheme;
 
 	scheme.day.temperature = -1;
 	scheme.day.gamma[0] = NAN;
@@ -1456,7 +1595,7 @@ main(int argc, char *argv[])
 	}
 
 	if (verbose) {
-		printf(_("Brightness: %.2f:%.2f\n"),
+		printf(_("Brightness range: %.2f:%.2f\n"),
 		       scheme.day.brightness, scheme.night.brightness);
 	}
 
@@ -1518,6 +1657,9 @@ main(int argc, char *argv[])
 	}
 
 	config_ini_free(&config_state);
+
+	dbus_context_t dbusCtx;
+	initDBus(&dbusCtx);
 
 	switch (mode) {
 	case PROGRAM_MODE_ONE_SHOT:
@@ -1624,12 +1766,15 @@ main(int argc, char *argv[])
 	case PROGRAM_MODE_CONTINUAL:
 	{
 		r = run_continual_mode(&loc, &scheme,
-				       method, &state,
-				       transition, verbose);
+								method, &state,
+								transition, verbose,
+								&dbusCtx);
 		if (r < 0) exit(EXIT_FAILURE);
 	}
 	break;
 	}
+
+	exitDBus(&dbusCtx);
 
 	/* Clean up gamma adjustment state */
 	method->free(&state);
