@@ -290,7 +290,7 @@ static const location_provider_t location_providers[] = {
 #define TRANSITION_HIGH    3.0
 
 /* Duration of sleep between screen updates (milliseconds). */
-#define SLEEP_DURATION        500
+#define SLEEP_DURATION        5000
 #define SLEEP_DURATION_SHORT  100
 
 typedef struct {
@@ -799,6 +799,10 @@ run_continual_mode(const location_t *loc,
 	   will be exactly 6500K. */
 	double adjustment_alpha = 1.0;
 
+	float brightness_offset = 0.0f;
+	int brightness_trans = 0;
+	int nb_frame = 0;
+
 	r = signals_install_handlers();
 	if (r < 0) {
 		return r;
@@ -858,9 +862,6 @@ run_continual_mode(const location_t *loc,
 			exiting = 0;
 		}
 
-		int checkDBus(dbus_context_t* dbusCtx);
-		checkDBus(dbusCtx);
-
 		/* Read timestamp */
 		double now;
 		r = systemtime_get_time(&now);
@@ -908,14 +909,21 @@ run_continual_mode(const location_t *loc,
 
 		/* Ongoing short transition */
 		if (short_trans_delta) {
-			/* Calculate alpha */
-			adjustment_alpha += short_trans_delta * 0.1 /
-				(float)short_trans_len;
-
-			/* Stop transition when done */
-			if (adjustment_alpha <= 0.0 ||
-			    adjustment_alpha >= 1.0) {
+			if (!brightness_trans)
+			{
+				/* Calculate alpha */
+				adjustment_alpha += short_trans_delta * 0.1 / (float)short_trans_len;
+				/* Stop transition when done */
+				if (adjustment_alpha <= 0.0 ||
+				    adjustment_alpha >= 1.0) {
+					short_trans_delta = 0;
+				}
+			}
+			else if (nb_frame > (short_trans_len * 1000.0f) / SLEEP_DURATION_SHORT)
+			{
 				short_trans_delta = 0;
+				brightness_trans = 0;
+				nb_frame = 0;
 			}
 
 			/* Clamp alpha value */
@@ -929,6 +937,20 @@ run_continual_mode(const location_t *loc,
 
 		interp.brightness = adjustment_alpha*1.0 +
 			(1.0-adjustment_alpha)*interp.brightness;
+
+		int checkDBusBrightnessOffset(dbus_context_t* dbusCtx);
+		int brightnessOffset = checkDBusBrightnessOffset(dbusCtx);
+		if (brightnessOffset != 0x00FFFFFF)
+		{
+			brightness_offset = brightnessOffset * 0.01f;
+			short_trans_delta = 1;
+			short_trans_len = 5;
+			brightness_trans = 1;
+			nb_frame = 0;
+		}
+
+		interp.brightness += brightness_offset;
+		interp.brightness = CLAMP(0.0, interp.brightness, 1.0);
 
 		/* Quit loop when done */
 		if (done && !short_trans_delta) break;
@@ -964,9 +986,12 @@ run_continual_mode(const location_t *loc,
 		/* Sleep for 5 seconds or 0.1 second. */
 		if (short_trans_delta) {
 			systemtime_msleep(SLEEP_DURATION_SHORT);
+			++nb_frame;
 		} else {
 			systemtime_msleep(SLEEP_DURATION);
 		}
+		static int i = 0;
+		printf("%d\n", ++i);
 	}
 
 	/* Restore saved gamma ramps */
@@ -1029,16 +1054,13 @@ int initDBus(dbus_context_t* dbusCtx)
 	return 0;
 }
 
-transition_scheme_t* gScheme = NULL;
-
-void dbusSetBrightness(DBusMessage* msg, DBusConnection* conn)
+int dbusSetBrightnessOffset(DBusMessage* msg, DBusConnection* conn)
 {
-	//DBusMessage* reply;
-	DBusMessageIter args;
-	//int stat = 1;
-	//dbus_uint32_t level = 21614;
-	//dbus_uint32_t serial = 0;
 	int param = 0;
+	DBusMessageIter args;
+	DBusMessage* reply;
+	int ret = 1;
+	dbus_uint32_t serial = 0;
 
 	// read the arguments
 	if (!dbus_message_iter_init(msg, &args))
@@ -1048,16 +1070,12 @@ void dbusSetBrightness(DBusMessage* msg, DBusConnection* conn)
 	else 
 		dbus_message_iter_get_basic(&args, &param);
 
-	/*// create a reply from the message
+	// create a reply from the message
 	reply = dbus_message_new_method_return(msg);
 
 	// add the arguments to the reply
 	dbus_message_iter_init_append(reply, &args);
-	if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_BOOLEAN, &stat)) { 
-		fprintf(stderr, "Out Of Memory!\n"); 
-		exit(1);
-	}
-	if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_UINT32, &level)) { 
+	if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_INT32, &ret)) { 
 		fprintf(stderr, "Out Of Memory!\n"); 
 		exit(1);
 	}
@@ -1070,29 +1088,27 @@ void dbusSetBrightness(DBusMessage* msg, DBusConnection* conn)
 	dbus_connection_flush(conn);
 
 	// free the reply
-	dbus_message_unref(reply);*/
-	printf("val: %d\n", param);
+	dbus_message_unref(reply);
 
-	gScheme->day.brightness += param * 0.01f;
-	gScheme->night.brightness += param * 0.01f;
+	//printf("val: %d\n", param);
+	return param;
 }
 
-int checkDBus(dbus_context_t* dbusCtx)
+int checkDBusBrightnessOffset(dbus_context_t* dbusCtx)
 {
-	int val = -1;
+	int val = 0x00FFFFFF;
 	// non blocking read of the next available message
-	if (dbus_connection_read_write(dbusCtx->connection, 10))
+	//if (dbus_connection_read_write(dbusCtx->connection, 0))
+	dbus_connection_read_write(dbusCtx->connection, 0);
+	DBusMessage* msg = dbus_connection_pop_message(dbusCtx->connection);
+	if (msg)
 	{
-		DBusMessage* msg = dbus_connection_pop_message(dbusCtx->connection);
-		if (msg)
-		{
-			// check this is a method call for the right interface & method
-			if (dbus_message_is_method_call(msg, dbusCtx->busName, "setBrightness"))
-				dbusSetBrightness(msg, dbusCtx->connection);
+		// check this is a method call for the right interface & method
+		if (dbus_message_is_method_call(msg, dbusCtx->busName, "setBrightnessOffset"))
+			val = dbusSetBrightnessOffset(msg, dbusCtx->connection);
 
-			// free the message
-			dbus_message_unref(msg);
-		}
+		// free the message
+		dbus_message_unref(msg);
 	}
 	return val;
 }
@@ -1125,7 +1141,6 @@ main(int argc, char *argv[])
 	   Initialized to indicate that the values are not set yet. */
 	transition_scheme_t scheme =
 		{ TRANSITION_HIGH, TRANSITION_LOW };
-	gScheme = &scheme;
 
 	scheme.day.temperature = -1;
 	scheme.day.gamma[0] = NAN;
