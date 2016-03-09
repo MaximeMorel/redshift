@@ -944,7 +944,7 @@ run_continual_mode(const location_t *loc,
 		{
 			brightness_offset = brightnessOffset * 0.01f;
 			short_trans_delta = 1;
-			short_trans_len = 5;
+			short_trans_len = 20;
 			brightness_trans = 1;
 			nb_frame = 0;
 		}
@@ -990,8 +990,6 @@ run_continual_mode(const location_t *loc,
 		} else {
 			systemtime_msleep(SLEEP_DURATION);
 		}
-		static int i = 0;
-		printf("%d\n", ++i);
 	}
 
 	/* Restore saved gamma ramps */

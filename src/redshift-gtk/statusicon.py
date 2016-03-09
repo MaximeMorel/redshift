@@ -283,10 +283,11 @@ class RedshiftStatusIcon(object):
             self.status_icon = Gtk.StatusIcon()
             self.status_icon.set_from_icon_name('redshift-status-on')
             self.status_icon.set_tooltip_text('Redshift')
-            self.status_icon.connect("scroll-event", self.scroll_cb)
+            self.status_icon.connect("scroll-event", self.scroll_cb2)
 
         # Create popup menu
         self.status_menu = Gtk.Menu()
+        self.status_menu.connect("scroll-event", self.scroll_cb2)
 
         # Add toggle action
         self.toggle_item = Gtk.CheckMenuItem.new_with_label(_('Enabled'))
@@ -415,6 +416,18 @@ class RedshiftStatusIcon(object):
             except dbus.DBusException as err:
                 print("DBus error: ", err)
                 pass
+
+    def scroll_cb2(self, widget, event):
+        if event.direction == Gdk.ScrollDirection.UP:
+            self._controller._brightness_offset += 1;
+        elif event.direction == Gdk.ScrollDirection.DOWN:
+            self._controller._brightness_offset -= 1;
+        if self._controller.brightness_offset < -100:
+            self._controller._brightness_offset = -100
+        if self._controller.brightness_offset > 100:
+            self._controller._brightness_offset = 100
+        self.set_dbus_brightness_offset(self._controller.brightness_offset)
+        self._controller.emit('brightness-changed', self._controller.brightness, self._controller.brightness_offset)
 
     def scroll_cb(self, aai, ind, steps):
         if steps == Gdk.ScrollDirection.UP:
