@@ -398,23 +398,24 @@ class RedshiftStatusIcon(object):
         self.dbusInit = False
 
     def set_dbus_brightness_offset(self, val):
-        if self.dbusInit == True:
-            try:
-                self.setBrightnessOffsetMethod(val)
-            except:
-                print("DBus call method error")
-                self.dbusInit = False
-                pass
-        else:
-            try:
-                self.session_bus = dbus.SessionBus()
-                self.dbusProxy = self.session_bus.get_object('dk.jonls.redshift', '/dk/jonls/redshift', introspect=False)
-                self.setBrightnessOffsetMethod = self.dbusProxy.get_dbus_method('setBrightnessOffset', 'dk.jonls.redshift')
-                self.dbusInit = True
-                print("Open DBus interface")
-            except dbus.DBusException as err:
-                print("DBus error: ", err)
-                pass
+        if self._controller.inhibited == False:
+            if self.dbusInit == True:
+                try:
+                    self.setBrightnessOffsetMethod(val)
+                except:
+                    print("DBus call method error")
+                    self.dbusInit = False
+                    pass
+            else:
+                try:
+                    self.session_bus = dbus.SessionBus()
+                    self.dbusProxy = self.session_bus.get_object('dk.jonls.redshift', '/dk/jonls/redshift', introspect=False)
+                    self.setBrightnessOffsetMethod = self.dbusProxy.get_dbus_method('setBrightnessOffset', 'dk.jonls.redshift')
+                    self.dbusInit = True
+                    print("Open DBus interface")
+                except dbus.DBusException as err:
+                    print("DBus error: ", err)
+                    pass
 
     def scroll_cb_intern(self, dir):
         if dir == Gdk.ScrollDirection.UP:

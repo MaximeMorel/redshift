@@ -825,6 +825,7 @@ run_continual_mode(const location_t *loc,
 	while (1) {
 		/* Check to see if disable signal was caught */
 		if (disable) {
+			brightness_trans = 0;
 			short_trans_len = 2;
 			if (!disabled) {
 				/* Transition to disabled state */
@@ -844,6 +845,7 @@ run_continual_mode(const location_t *loc,
 
 		/* Check to see if exit signal was caught */
 		if (exiting) {
+			brightness_trans = 0;
 			if (done) {
 				/* On second signal stop the ongoing
 				   transition */
@@ -943,13 +945,16 @@ run_continual_mode(const location_t *loc,
 		if (brightnessOffset != 0x00FFFFFF)
 		{
 			brightness_offset = brightnessOffset * 0.01f;
+		}
+		if (adjustment_alpha <= 0.0)
+		{
 			short_trans_delta = 1;
 			short_trans_len = 20;
 			brightness_trans = 1;
 			nb_frame = 0;
 		}
 
-		interp.brightness += brightness_offset;
+		interp.brightness += (1.0 - adjustment_alpha) * brightness_offset;
 		interp.brightness = CLAMP(0.0, interp.brightness, 1.0);
 
 		/* Quit loop when done */
