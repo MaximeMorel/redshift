@@ -1067,10 +1067,10 @@ int dbusSetBrightnessOffset(DBusMessage* msg, DBusConnection* conn)
 
 	// read the arguments
 	if (!dbus_message_iter_init(msg, &args))
-		fprintf(stderr, "Message has no arguments!\n"); 
-	else if (DBUS_TYPE_INT32 != dbus_message_iter_get_arg_type(&args)) 
-		fprintf(stderr, "Argument is not string!\n"); 
-	else 
+		fprintf(stderr, "Message has no arguments!\n");
+	else if (DBUS_TYPE_INT32 != dbus_message_iter_get_arg_type(&args))
+		fprintf(stderr, "Argument is not string!\n");
+	else
 		dbus_message_iter_get_basic(&args, &param);
 
 	// create a reply from the message
@@ -1078,14 +1078,14 @@ int dbusSetBrightnessOffset(DBusMessage* msg, DBusConnection* conn)
 
 	// add the arguments to the reply
 	dbus_message_iter_init_append(reply, &args);
-	if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_INT32, &ret)) { 
-		fprintf(stderr, "Out Of Memory!\n"); 
+	if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_INT32, &ret)) {
+		fprintf(stderr, "Out Of Memory!\n");
 		exit(1);
 	}
 
 	// send the reply && flush the connection
 	if (!dbus_connection_send(conn, reply, &serial)) {
-		fprintf(stderr, "Out Of Memory!\n"); 
+		fprintf(stderr, "Out Of Memory!\n");
 		exit(1);
 	}
 	dbus_connection_flush(conn);
