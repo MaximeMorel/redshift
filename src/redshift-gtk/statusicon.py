@@ -283,11 +283,11 @@ class RedshiftStatusIcon(object):
             self.status_icon = Gtk.StatusIcon()
             self.status_icon.set_from_icon_name('redshift-status-on')
             self.status_icon.set_tooltip_text('Redshift')
-            self.status_icon.connect("scroll-event", self.scroll_cb2)
+            self.status_icon.connect("scroll-event", self.scroll_cb_alt)
 
         # Create popup menu
         self.status_menu = Gtk.Menu()
-        self.status_menu.connect("scroll-event", self.scroll_cb2)
+        self.status_menu.connect("scroll-event", self.scroll_cb_alt)
 
         # Add toggle action
         self.toggle_item = Gtk.CheckMenuItem.new_with_label(_('Enabled'))
@@ -401,9 +401,8 @@ class RedshiftStatusIcon(object):
         if self.dbusInit == True:
             try:
                 self.setBrightnessOffsetMethod(val)
-                #print("setBrightnessOffset: ", val)
-                #self.dbusInit = False
             except:
+                print("DBus call method error")
                 self.dbusInit = False
                 pass
         else:
@@ -417,10 +416,10 @@ class RedshiftStatusIcon(object):
                 print("DBus error: ", err)
                 pass
 
-    def scroll_cb2(self, widget, event):
-        if event.direction == Gdk.ScrollDirection.UP:
+    def scroll_cb_intern(self, dir):
+        if dir == Gdk.ScrollDirection.UP:
             self._controller._brightness_offset += 1;
-        elif event.direction == Gdk.ScrollDirection.DOWN:
+        elif dir == Gdk.ScrollDirection.DOWN:
             self._controller._brightness_offset -= 1;
         if self._controller.brightness_offset < -100:
             self._controller._brightness_offset = -100
@@ -430,16 +429,10 @@ class RedshiftStatusIcon(object):
         self._controller.emit('brightness-changed', self._controller.brightness, self._controller.brightness_offset)
 
     def scroll_cb(self, aai, ind, steps):
-        if steps == Gdk.ScrollDirection.UP:
-            self._controller._brightness_offset += 1;
-        elif steps == Gdk.ScrollDirection.DOWN:
-            self._controller._brightness_offset -= 1;
-        if self._controller.brightness_offset < -100:
-            self._controller._brightness_offset = -100
-        if self._controller.brightness_offset > 100:
-            self._controller._brightness_offset = 100
-        self.set_dbus_brightness_offset(self._controller.brightness_offset)
-        self._controller.emit('brightness-changed', self._controller.brightness, self._controller.brightness_offset)
+        self.scroll_cb_intern(steps)
+
+    def scroll_cb_alt(self, widget, event):
+        self.scroll_cb_intern(event.direction)
 
     def remove_suspend_timer(self):
         '''Disable any previously set suspend timer'''
