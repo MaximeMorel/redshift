@@ -359,6 +359,15 @@ class RedshiftStatusIcon(object):
         self.info_dialog.get_content_area().pack_start(self.brightness_label, True, True, 0)
         self.brightness_label.show()
 
+        self.brightness_scale = Gtk.HScale()
+        self.brightness_scale.set_range(-100, 100)
+        self.brightness_scale.set_digits(0)
+        #self.brightness_scale.set_alignment(0.0, 0.5)
+        #self.brightness_scale.set_padding(6, 6)
+        self.info_dialog.get_content_area().pack_start(self.brightness_scale, True, True, 0)
+        self.brightness_scale.connect('change-value', self.scale_cb)
+        self.brightness_scale.show()
+
         self.period_label = Gtk.Label()
         self.period_label.set_alignment(0.0, 0.5)
         self.period_label.set_padding(6, 6)
@@ -401,6 +410,7 @@ class RedshiftStatusIcon(object):
         if self._controller.inhibited == False:
             if self.dbusInit == True:
                 try:
+                    #print("setBrightnessOffsetMethod ", val)
                     self.setBrightnessOffsetMethod(val)
                 except:
                     print("DBus call method error")
@@ -426,6 +436,7 @@ class RedshiftStatusIcon(object):
             self._controller._brightness_offset = -100
         if self._controller.brightness_offset > 100:
             self._controller._brightness_offset = 100
+        self.brightness_scale.set_value(self._controller.brightness_offset)
         self.set_dbus_brightness_offset(self._controller.brightness_offset)
         self._controller.emit('brightness-changed', self._controller.brightness, self._controller.brightness_offset)
 
@@ -434,6 +445,15 @@ class RedshiftStatusIcon(object):
 
     def scroll_cb_alt(self, widget, event):
         self.scroll_cb_intern(event.direction)
+
+    def scale_cb(self, range, scroll, value):
+        if value < -100:
+            value = -100
+        if value > 100:
+            value = 100
+        self._controller._brightness_offset = int(value)
+        self._controller.emit('brightness-changed', self._controller.brightness, self._controller.brightness_offset)
+        self.set_dbus_brightness_offset(self._controller._brightness_offset)
 
     def remove_suspend_timer(self):
         '''Disable any previously set suspend timer'''
