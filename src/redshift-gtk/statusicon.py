@@ -57,7 +57,7 @@ class RedshiftController(GObject.GObject):
 
     __gsignals__ = {
         'inhibit-changed': (GObject.SIGNAL_RUN_FIRST, None, (bool,)),
-        'temperature-changed': (GObject.SIGNAL_RUN_FIRST, None, (int,)),
+        'temperature-changed': (GObject.SIGNAL_RUN_FIRST, None, (int, int)),
         'period-changed': (GObject.SIGNAL_RUN_FIRST, None, (str,)),
         'location-changed': (GObject.SIGNAL_RUN_FIRST, None, (float, float)),
         'error-occured': (GObject.SIGNAL_RUN_FIRST, None, (str,)),
@@ -75,6 +75,7 @@ class RedshiftController(GObject.GObject):
         # Initialize state variables
         self._inhibited = False
         self._temperature = 0
+        self._temperature_offset = 0
         self._period = 'Unknown'
         self._location = (0.0, 0.0)
         self._brightness = 100
@@ -136,6 +137,11 @@ class RedshiftController(GObject.GObject):
     def temperature(self):
         '''Current screen temperature'''
         return self._temperature
+
+    @property
+    def temperature_offset(self):
+        '''Current screen temperature offset'''
+        return self._temperature_offset
 
     @property
     def brightness(self):
@@ -209,7 +215,7 @@ class RedshiftController(GObject.GObject):
             new_temperature = int(value.rstrip('K'), 10)
             if new_temperature != self._temperature:
                 self._temperature = new_temperature
-                self.emit('temperature-changed', new_temperature)
+                self.emit('temperature-changed', new_temperature, self._temperature_offset)
         elif key == 'Brightness':
             new_brightness = int(float(value) * 100)
             if new_brightness != self._brightness:
@@ -350,8 +356,16 @@ class RedshiftStatusIcon(object):
         self.temperature_label = Gtk.Label()
         self.temperature_label.set_alignment(0.0, 0.5)
         self.temperature_label.set_padding(6, 6)
+        self.temperature_label.set_width_chars(40);
         self.info_dialog.get_content_area().pack_start(self.temperature_label, True, True, 0)
         self.temperature_label.show()
+
+        self.temperature_scale = Gtk.HScale()
+        self.temperature_scale.set_range(-5000, 5000)
+        self.temperature_scale.set_digits(0)
+        self.info_dialog.get_content_area().pack_start(self.temperature_scale, True, True, 0)
+        self.temperature_scale.connect('change-value', self.temperature_scale_cb)
+        self.temperature_scale.show()
 
         self.brightness_label = Gtk.Label()
         self.brightness_label.set_alignment(0.0, 0.5)
@@ -362,10 +376,8 @@ class RedshiftStatusIcon(object):
         self.brightness_scale = Gtk.HScale()
         self.brightness_scale.set_range(-100, 100)
         self.brightness_scale.set_digits(0)
-        #self.brightness_scale.set_alignment(0.0, 0.5)
-        #self.brightness_scale.set_padding(6, 6)
         self.info_dialog.get_content_area().pack_start(self.brightness_scale, True, True, 0)
-        self.brightness_scale.connect('change-value', self.scale_cb)
+        self.brightness_scale.connect('change-value', self.brightness_scale_cb)
         self.brightness_scale.show()
 
         self.period_label = Gtk.Label()
@@ -387,7 +399,7 @@ class RedshiftStatusIcon(object):
         # Set info box text
         self.change_inhibited(self._controller.inhibited)
         self.change_period(self._controller.period)
-        self.change_temperature(self._controller.temperature)
+        self.change_temperature(self._controller.temperature, self._controller.temperature_offset)
         self.change_location(self._controller.location)
         self.change_brightness(self._controller.brightness, self._controller.brightness_offset)
 
@@ -406,21 +418,22 @@ class RedshiftStatusIcon(object):
         self.suspend_timer = None
         self.dbusInit = False
 
-    def set_dbus_brightness_offset(self, val):
+    def set_dbus_value_offset(self, type, val):
+        """type == 0 means temperature, type == 1 means brightness"""
         if self._controller.inhibited == False:
             if self.dbusInit == True:
                 try:
-                    #print("setBrightnessOffsetMethod ", val)
-                    self.setBrightnessOffsetMethod(val)
-                except:
-                    print("DBus call method error")
+                    #print("setValueOffsetMethod ", type, val)
+                    self.setValueOffsetMethod(type, val)
+                except BaseException as err:
+                    print("DBus call method error: ", err)
                     self.dbusInit = False
                     pass
             else:
                 try:
                     self.session_bus = dbus.SessionBus()
                     self.dbusProxy = self.session_bus.get_object('dk.jonls.redshift', '/dk/jonls/redshift', introspect=False)
-                    self.setBrightnessOffsetMethod = self.dbusProxy.get_dbus_method('setBrightnessOffset', 'dk.jonls.redshift')
+                    self.setValueOffsetMethod = self.dbusProxy.get_dbus_method('setValueOffset', 'dk.jonls.redshift')
                     self.dbusInit = True
                     print("Open DBus interface")
                 except dbus.DBusException as err:
@@ -429,15 +442,15 @@ class RedshiftStatusIcon(object):
 
     def scroll_cb_intern(self, dir):
         if dir == Gdk.ScrollDirection.UP:
-            self._controller._brightness_offset += 1;
+            self._controller._brightness_offset += 2;
         elif dir == Gdk.ScrollDirection.DOWN:
-            self._controller._brightness_offset -= 1;
+            self._controller._brightness_offset -= 2;
         if self._controller.brightness_offset < -100:
             self._controller._brightness_offset = -100
         if self._controller.brightness_offset > 100:
             self._controller._brightness_offset = 100
         self.brightness_scale.set_value(self._controller.brightness_offset)
-        self.set_dbus_brightness_offset(self._controller.brightness_offset)
+        self.set_dbus_value_offset(1, self._controller.brightness_offset)
         self._controller.emit('brightness-changed', self._controller.brightness, self._controller.brightness_offset)
 
     def scroll_cb(self, aai, ind, steps):
@@ -446,14 +459,23 @@ class RedshiftStatusIcon(object):
     def scroll_cb_alt(self, widget, event):
         self.scroll_cb_intern(event.direction)
 
-    def scale_cb(self, range, scroll, value):
+    def temperature_scale_cb(self, range, scroll, value):
+        if value < -5000:
+            value = -5000
+        if value > 5000:
+            value = 5000
+        self._controller._temperature_offset = int(value)
+        self._controller.emit('temperature-changed', self._controller.temperature, self._controller.temperature_offset)
+        self.set_dbus_value_offset(0, self._controller._temperature_offset)
+
+    def brightness_scale_cb(self, range, scroll, value):
         if value < -100:
             value = -100
         if value > 100:
             value = 100
         self._controller._brightness_offset = int(value)
         self._controller.emit('brightness-changed', self._controller.brightness, self._controller.brightness_offset)
-        self.set_dbus_brightness_offset(self._controller._brightness_offset)
+        self.set_dbus_value_offset(1, self._controller._brightness_offset)
 
     def remove_suspend_timer(self):
         '''Disable any previously set suspend timer'''
@@ -540,9 +562,9 @@ class RedshiftStatusIcon(object):
         '''Callback when controller changes period'''
         self.change_period(period)
 
-    def temperature_change_cb(self, controller, temperature):
+    def temperature_change_cb(self, controller, temperature, temperature_offset):
         '''Callback when controller changes temperature'''
-        self.change_temperature(temperature)
+        self.change_temperature(temperature, temperature_offset)
 
     def brightness_change_cb(self, controller, brightness, brightness_offset):
         '''Callback when controller changes brightness'''
@@ -569,9 +591,10 @@ class RedshiftStatusIcon(object):
         self.toggle_item.set_active(not inhibited)
         self.status_label.set_markup(_('<b>Status:</b> {}').format(_('Disabled') if inhibited else _('Enabled')))
 
-    def change_temperature(self, temperature):
+    def change_temperature(self, temperature, temperature_offset):
         '''Change interface to new temperature'''
-        self.temperature_label.set_markup('<b>{}:</b> {}K'.format(_('Color temperature'), temperature))
+        sign = ('', '+')[temperature_offset >= 0]
+        self.temperature_label.set_markup('<b>{}:</b> {}K ({}{}K)'.format(_('Color temperature'), temperature, sign, temperature_offset))
 
     def change_brightness(self, brightness, brightness_offset):
         '''Change interface to new brightness'''

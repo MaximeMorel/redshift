@@ -799,8 +799,9 @@ run_continual_mode(const location_t *loc,
 	   will be exactly 6500K. */
 	double adjustment_alpha = 1.0;
 
+	int temperature_offset = 0;
 	float brightness_offset = 0.0f;
-	int brightness_trans = 0;
+	int user_trans = 0;
 	int nb_frame = 0;
 
 	r = signals_install_handlers();
@@ -825,7 +826,7 @@ run_continual_mode(const location_t *loc,
 	while (1) {
 		/* Check to see if disable signal was caught */
 		if (disable) {
-			brightness_trans = 0;
+			user_trans = 0;
 			short_trans_len = 2;
 			if (!disabled) {
 				/* Transition to disabled state */
@@ -845,7 +846,7 @@ run_continual_mode(const location_t *loc,
 
 		/* Check to see if exit signal was caught */
 		if (exiting) {
-			brightness_trans = 0;
+			user_trans = 0;
 			if (done) {
 				/* On second signal stop the ongoing
 				   transition */
@@ -911,7 +912,7 @@ run_continual_mode(const location_t *loc,
 
 		/* Ongoing short transition */
 		if (short_trans_delta) {
-			if (!brightness_trans)
+			if (!user_trans)
 			{
 				/* Calculate alpha */
 				adjustment_alpha += short_trans_delta * 0.1 / (float)short_trans_len;
@@ -924,7 +925,7 @@ run_continual_mode(const location_t *loc,
 			else if (nb_frame > (short_trans_len * 1000.0f) / SLEEP_DURATION_SHORT)
 			{
 				short_trans_delta = 0;
-				brightness_trans = 0;
+				user_trans = 0;
 				nb_frame = 0;
 			}
 
@@ -940,22 +941,32 @@ run_continual_mode(const location_t *loc,
 		interp.brightness = adjustment_alpha*1.0 +
 			(1.0-adjustment_alpha)*interp.brightness;
 
-		int checkDBusBrightnessOffset(dbus_context_t* dbusCtx);
-		int brightnessOffset = checkDBusBrightnessOffset(dbusCtx);
-		if (brightnessOffset != 0x00FFFFFF)
+		int checkDBusValueOffset(dbus_context_t* dbusCtx, int* type, int* value);
+		int type = -1;
+		int value = -1;
+		int success = checkDBusValueOffset(dbusCtx, &type, &value);
+		if (success)
 		{
-			brightness_offset = brightnessOffset * 0.01f;
+			if (type == 0)
+				temperature_offset = value;
+			else if (type == 1)
+				brightness_offset = value * 0.01f;
 		}
 		if (adjustment_alpha <= 0.0)
 		{
 			short_trans_delta = 1;
 			short_trans_len = 20;
-			brightness_trans = 1;
+			user_trans = 1;
 			nb_frame = 0;
 		}
 
+		interp.temperature += (1.0 - adjustment_alpha) * temperature_offset;
+
 		interp.brightness += (1.0 - adjustment_alpha) * brightness_offset;
 		interp.brightness = CLAMP(0.0, interp.brightness, 1.0);
+
+		//sprintf(buf, "echo \"%d %d\" >> /tmp/red.log", interp.temperature, value);
+		//system(buf);
 
 		/* Quit loop when done */
 		if (done && !short_trans_delta) break;
@@ -1057,9 +1068,9 @@ int initDBus(dbus_context_t* dbusCtx)
 	return 0;
 }
 
-int dbusSetBrightnessOffset(DBusMessage* msg, DBusConnection* conn)
+int dbusSetValueOffset(DBusMessage* msg, DBusConnection* conn, int* type, int* value)
 {
-	int param = 0;
+	int success = 0;
 	DBusMessageIter args;
 	DBusMessage* reply;
 	int ret = 1;
@@ -1067,11 +1078,31 @@ int dbusSetBrightnessOffset(DBusMessage* msg, DBusConnection* conn)
 
 	// read the arguments
 	if (!dbus_message_iter_init(msg, &args))
+	{
 		fprintf(stderr, "Message has no arguments!\n");
-	else if (DBUS_TYPE_INT32 != dbus_message_iter_get_arg_type(&args))
-		fprintf(stderr, "Argument is not string!\n");
+	}
 	else
-		dbus_message_iter_get_basic(&args, &param);
+	{
+		if (dbus_message_iter_get_arg_type(&args) == DBUS_TYPE_INT32)
+		{
+			dbus_message_iter_get_basic(&args, type);
+			dbus_message_iter_next(&args);
+
+			if (dbus_message_iter_get_arg_type(&args) == DBUS_TYPE_INT32)
+			{
+				dbus_message_iter_get_basic(&args, value);
+				success = 1;
+			}
+			else
+			{
+				fprintf(stderr, "2nd argument is not int32!\n");
+			}
+		}
+		else
+		{
+			fprintf(stderr, "1st argument is not int32!\n");
+		}
+	}
 
 	// create a reply from the message
 	reply = dbus_message_new_method_return(msg);
@@ -1080,13 +1111,13 @@ int dbusSetBrightnessOffset(DBusMessage* msg, DBusConnection* conn)
 	dbus_message_iter_init_append(reply, &args);
 	if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_INT32, &ret)) {
 		fprintf(stderr, "Out Of Memory!\n");
-		exit(1);
+		success = 0;
 	}
 
 	// send the reply && flush the connection
 	if (!dbus_connection_send(conn, reply, &serial)) {
 		fprintf(stderr, "Out Of Memory!\n");
-		exit(1);
+		success = 0;
 	}
 	dbus_connection_flush(conn);
 
@@ -1094,26 +1125,25 @@ int dbusSetBrightnessOffset(DBusMessage* msg, DBusConnection* conn)
 	dbus_message_unref(reply);
 
 	//printf("val: %d\n", param);
-	return param;
+	return success;
 }
 
-int checkDBusBrightnessOffset(dbus_context_t* dbusCtx)
+int checkDBusValueOffset(dbus_context_t* dbusCtx, int* type, int* value)
 {
-	int val = 0x00FFFFFF;
+	int success = 0;
 	// non blocking read of the next available message
-	//if (dbus_connection_read_write(dbusCtx->connection, 0))
 	dbus_connection_read_write(dbusCtx->connection, 0);
 	DBusMessage* msg = dbus_connection_pop_message(dbusCtx->connection);
 	if (msg)
 	{
 		// check this is a method call for the right interface & method
-		if (dbus_message_is_method_call(msg, dbusCtx->busName, "setBrightnessOffset"))
-			val = dbusSetBrightnessOffset(msg, dbusCtx->connection);
+		if (dbus_message_is_method_call(msg, dbusCtx->busName, "setValueOffset"))
+			success = dbusSetValueOffset(msg, dbusCtx->connection, type, value);
 
 		// free the message
 		dbus_message_unref(msg);
 	}
-	return val;
+	return success;
 }
 
 int exitDBus(dbus_context_t* dbusCtx)
