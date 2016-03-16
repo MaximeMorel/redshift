@@ -965,9 +965,6 @@ run_continual_mode(const location_t *loc,
 		interp.brightness += (1.0 - adjustment_alpha) * brightness_offset;
 		interp.brightness = CLAMP(0.0, interp.brightness, 1.0);
 
-		//sprintf(buf, "echo \"%d %d\" >> /tmp/red.log", interp.temperature, value);
-		//system(buf);
-
 		/* Quit loop when done */
 		if (done && !short_trans_delta) break;
 
@@ -1148,7 +1145,7 @@ int checkDBusValueOffset(dbus_context_t* dbusCtx, int* type, int* value)
 
 int exitDBus(dbus_context_t* dbusCtx)
 {
-	//dbus_connection_close(dbusCtx->connection);
+	dbus_connection_unref(dbusCtx->connection);
 	return 0;
 }
 

@@ -46,12 +46,6 @@ from . import utils
 
 _ = gettext.gettext
 
-def on_reply():
-    print('on_reply')
-
-def on_error():
-    print('on_error')
-
 class RedshiftController(GObject.GObject):
     '''A GObject wrapper around the child process'''
 
