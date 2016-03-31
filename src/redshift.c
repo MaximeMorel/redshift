@@ -951,13 +951,14 @@ run_continual_mode(const location_t *loc,
 				temperature_offset = value;
 			else if (type == 1)
 				brightness_offset = value * 0.01f;
-		}
-		if (adjustment_alpha <= 0.0)
-		{
-			short_trans_delta = 1;
-			short_trans_len = 20;
-			user_trans = 1;
-			nb_frame = 0;
+
+			if (adjustment_alpha <= 0.0)
+			{
+				short_trans_delta = 1;
+				short_trans_len = 20;
+				user_trans = 1;
+				nb_frame = 0;
+			}
 		}
 
 		interp.temperature += (1.0 - adjustment_alpha) * temperature_offset;
