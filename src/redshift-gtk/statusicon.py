@@ -284,17 +284,14 @@ class RedshiftStatusIcon(object):
                                                         'redshift-status-on',
                                                         appindicator.IndicatorCategory.APPLICATION_STATUS)
             self.indicator.set_status(appindicator.IndicatorStatus.ACTIVE)
-            self.indicator.connect("scroll-event", self.scroll_cb)
         else:
             # Create status icon
             self.status_icon = Gtk.StatusIcon()
             self.status_icon.set_from_icon_name('redshift-status-on')
             self.status_icon.set_tooltip_text('Redshift')
-            self.status_icon.connect("scroll-event", self.scroll_cb_alt)
 
         # Create popup menu
         self.status_menu = Gtk.Menu()
-        self.status_menu.connect("scroll-event", self.scroll_cb_alt)
 
         # Add toggle action
         self.toggle_item = Gtk.CheckMenuItem.new_with_label(_('Enabled'))
@@ -441,25 +438,6 @@ class RedshiftStatusIcon(object):
                 except dbus.DBusException as err:
                     print("DBus error: ", err)
                     pass
-
-    def scroll_cb_intern(self, dir):
-        if dir == Gdk.ScrollDirection.UP:
-            self._controller._brightness_offset += 2;
-        elif dir == Gdk.ScrollDirection.DOWN:
-            self._controller._brightness_offset -= 2;
-        if self._controller.brightness_offset < -100:
-            self._controller._brightness_offset = -100
-        if self._controller.brightness_offset > 100:
-            self._controller._brightness_offset = 100
-        self.brightness_scale.set_value(self._controller.brightness_offset)
-        self.set_dbus_value_offset(1, self._controller.brightness_offset)
-        self._controller.emit('brightness-changed', self._controller.brightness, self._controller.brightness_offset)
-
-    def scroll_cb(self, aai, ind, steps):
-        self.scroll_cb_intern(steps)
-
-    def scroll_cb_alt(self, widget, event):
-        self.scroll_cb_intern(event.direction)
 
     def temperature_scale_cb(self, range, scroll, value):
         if value < -5000:
