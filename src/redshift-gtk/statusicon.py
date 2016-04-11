@@ -29,6 +29,7 @@ import signal
 import re
 import gettext
 import dbus
+from dbus.mainloop.glib import DBusGMainLoop
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -45,6 +46,12 @@ from . import defs
 from . import utils
 
 _ = gettext.gettext
+
+def on_dbus_reply(arg):
+    None
+
+def on_dbus_error(err):
+    print('on_dbus_error:', err)
 
 class RedshiftController(GObject.GObject):
     '''A GObject wrapper around the child process'''
@@ -410,6 +417,7 @@ class RedshiftStatusIcon(object):
 
         # Initialize suspend timer
         self.suspend_timer = None
+        self.dbus_loop = DBusGMainLoop()
         self.dbusInit = False
 
     def set_dbus_value_offset(self, type, val):
@@ -418,14 +426,14 @@ class RedshiftStatusIcon(object):
             if self.dbusInit == True:
                 try:
                     #print("setValueOffsetMethod ", type, val)
-                    self.setValueOffsetMethod(type, val)
+                    self.setValueOffsetMethod(type, val, reply_handler=on_dbus_reply, error_handler=on_dbus_error)
                 except BaseException as err:
                     print("DBus call method error: ", err)
                     self.dbusInit = False
                     pass
             else:
                 try:
-                    self.session_bus = dbus.SessionBus()
+                    self.session_bus = dbus.SessionBus(mainloop=self.dbus_loop)
                     self.dbusProxy = self.session_bus.get_object('dk.jonls.redshift', '/dk/jonls/redshift', introspect=False)
                     self.setValueOffsetMethod = self.dbusProxy.get_dbus_method('setValueOffset', 'dk.jonls.redshift')
                     self.dbusInit = True
