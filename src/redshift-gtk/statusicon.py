@@ -338,6 +338,7 @@ class RedshiftStatusIcon(object):
         self.info_dialog.add_button(_('Close'), Gtk.ButtonsType.CLOSE)
         self.info_dialog.set_resizable(False)
         self.info_dialog.set_property('border-width', 6)
+        self.info_dialog.connect('delete-event', self.response_info_cb)
 
         self.status_label = Gtk.Label()
         self.status_label.set_alignment(0.0, 0.5)
@@ -514,6 +515,7 @@ class RedshiftStatusIcon(object):
     def response_info_cb(self, widget, data=None):
         '''Callback when a button in the info dialog was activated'''
         self.info_dialog.hide()
+        return True
 
     def update_status_icon(self):
         '''Update the status icon according to the internally recorded state
