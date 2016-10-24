@@ -577,6 +577,7 @@ class RedshiftStatusIcon(object):
         '''Change interface to new temperature'''
         sign = ('', '+')[temperature_offset >= 0]
         self.temperature_label.set_markup('<b>{}:</b> {}K ({}{}K)'.format(_('Color temperature'), temperature, sign, temperature_offset))
+        self.update_tooltip_text()
 
     def change_brightness(self, brightness, brightness_offset):
         '''Change interface to new brightness'''
@@ -586,11 +587,18 @@ class RedshiftStatusIcon(object):
     def change_period(self, period):
         '''Change interface to new period'''
         self.period_label.set_markup('<b>{}:</b> {}'.format(_('Period'), period))
+        self.update_tooltip_text()
 
     def change_location(self, location):
         '''Change interface to new location'''
         self.location_label.set_markup('<b>{}:</b> {}, {}'.format(_('Location'), *location))
 
+    def update_tooltip_text(self):
+        '''Update text of tooltip status icon '''
+        if not appindicator:
+            self.status_icon.set_tooltip_text('{}: {}K, {}: {}'.format(
+                _('Color temperature'), self._controller.temperature,
+                _('Period'), self._controller.period))
 
     def autostart_cb(self, widget, data=None):
         '''Callback when a request to toggle autostart is made'''
