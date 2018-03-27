@@ -129,6 +129,10 @@ int poll(struct pollfd *fds, int nfds, int timeout) { abort(); return -1; }
 /* Length of fade in numbers of short sleep durations. */
 #define FADE_LENGTH  40
 
+typedef struct {
+	DBusConnection* connection;
+	const char* busName;
+} dbus_context_t;
 
 /* Names of periods of day */
 static const char *period_names[] = {
@@ -603,8 +607,8 @@ run_continual_mode(const location_provider_t *provider,
 		   location_state_t *location_state,
 		   const transition_scheme_t *scheme,
 		   const gamma_method_t *method,
-		   gamma_state_t *state,
-		   int transition, int verbose,
+		   gamma_state_t *method_state,
+		   int use_fade, int preserve_gamma, int verbose,
 		   dbus_context_t* dbusCtx)
 {
 	int r;

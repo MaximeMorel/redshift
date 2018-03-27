@@ -34,11 +34,12 @@ class RedshiftController(GObject.GObject):
 
     __gsignals__ = {
         'inhibit-changed': (GObject.SIGNAL_RUN_FIRST, None, (bool,)),
-        'temperature-changed': (GObject.SIGNAL_RUN_FIRST, None, (int,)),
+        'temperature-changed': (GObject.SIGNAL_RUN_FIRST, None, (int,int)),
         'period-changed': (GObject.SIGNAL_RUN_FIRST, None, (str,)),
         'location-changed': (GObject.SIGNAL_RUN_FIRST, None, (float, float)),
         'error-occured': (GObject.SIGNAL_RUN_FIRST, None, (str,)),
         'stopped': (GObject.SIGNAL_RUN_FIRST, None, ()),
+        'brightness-changed': (GObject.SIGNAL_RUN_FIRST, None, (int, int)),
     }
 
     def __init__(self, args):
@@ -52,8 +53,11 @@ class RedshiftController(GObject.GObject):
         # Initialize state variables
         self._inhibited = False
         self._temperature = 0
+        self._temperature_offset = 0
         self._period = 'Unknown'
         self._location = (0.0, 0.0)
+        self._brightness = 100
+        self._brightness_offset = 0
 
         # Start redshift with arguments
         args.insert(0, os.path.join(defs.BINDIR, 'redshift'))
@@ -119,6 +123,21 @@ class RedshiftController(GObject.GObject):
         return self._temperature
 
     @property
+    def temperature_offset(self):
+        """Current screen temperature offset"""
+        return self._temperature_offset
+
+    @property
+    def brightness(self):
+        """Current screen brightness"""
+        return self._brightness
+
+    @property
+    def brightness_offset(self):
+        """Current screen brightness_offset"""
+        return self._brightness_offset
+
+    @property
     def period(self):
         """Current period of day."""
         return self._period
@@ -179,7 +198,12 @@ class RedshiftController(GObject.GObject):
             new_temperature = int(value.rstrip('K'), 10)
             if new_temperature != self._temperature:
                 self._temperature = new_temperature
-                self.emit('temperature-changed', new_temperature)
+                self.emit('temperature-changed', new_temperature, self._temperature_offset)
+        elif key == 'Brightness':
+            new_brightness = int(float(value) * 100)
+            if new_brightness != self._brightness:
+                self._brightness = new_brightness
+                self.emit('brightness-changed', new_brightness, self._brightness_offset)
         elif key == 'Period':
             new_period = value
             if new_period != self._period:
