@@ -46,6 +46,11 @@ from . import utils
 
 _ = gettext.gettext
 
+def on_dbus_reply(arg):
+    None
+
+def on_dbus_error(err):
+    print('on_dbus_error:', err)
 
 class RedshiftStatusIcon(object):
     """The status icon tracking the RedshiftController."""
@@ -139,6 +144,26 @@ class RedshiftStatusIcon(object):
         content_area.pack_start(self.temperature_label, True, True, 0)
         self.temperature_label.show()
 
+        self.temperature_scale = Gtk.HScale()
+        self.temperature_scale.set_range(-5000, 5000)
+        self.temperature_scale.set_digits(0)
+        content_area.pack_start(self.temperature_scale, True, True, 0)
+        self.temperature_scale.connect('change-value', self.temperature_scale_cb)
+        self.temperature_scale.show()
+
+        self.brightness_label = Gtk.Label()
+        self.brightness_label.set_alignment(0.0, 0.5)
+        self.brightness_label.set_padding(6, 6)
+        content_area.pack_start(self.brightness_label, True, True, 0)
+        self.brightness_label.show()
+
+        self.brightness_scale = Gtk.HScale()
+        self.brightness_scale.set_range(-100, 100)
+        self.brightness_scale.set_digits(0)
+        content_area.pack_start(self.brightness_scale, True, True, 0)
+        self.brightness_scale.connect('change-value', self.brightness_scale_cb)
+        self.brightness_scale.show()
+
         self.period_label = Gtk.Label()
         self.period_label.set_alignment(0.0, 0.5)
         self.period_label.set_padding(6, 6)
@@ -163,7 +188,7 @@ class RedshiftStatusIcon(object):
         # Set info box text
         self.change_inhibited(self._controller.inhibited)
         self.change_period(self._controller.period)
-        self.change_temperature(self._controller.temperature)
+        self.change_temperature(self._controller.temperature, self._controller.temperature_offset)
         self.change_location(self._controller.location)
         self.change_brightness(self._controller.brightness, self._controller.brightness_offset)
 
