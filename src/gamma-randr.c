@@ -14,7 +14,7 @@
    You should have received a copy of the GNU General Public License
    along with Redshift.  If not, see <http://www.gnu.org/licenses/>.
 
-   Copyright (c) 2010-2014  Jon Lund Steffensen <jonlst@gmail.com>
+   Copyright (c) 2010-2017  Jon Lund Steffensen <jonlst@gmail.com>
 */
 
 #include <stdio.h>
@@ -42,30 +42,50 @@
 #define RANDR_VERSION_MINOR  3
 
 
-int
-randr_init(randr_state_t *state)
+typedef struct {
+	xcb_randr_crtc_t crtc;
+	unsigned int ramp_size;
+	uint16_t *saved_ramps;
+} randr_crtc_state_t;
+
+typedef struct {
+	xcb_connection_t *conn;
+	xcb_screen_t *screen;
+	int preferred_screen;
+	int screen_num;
+	int crtc_num_count;
+	int* crtc_num;
+	unsigned int crtc_count;
+	randr_crtc_state_t *crtcs;
+} randr_state_t;
+
+
+static int
+randr_init(randr_state_t **state)
 {
 	/* Initialize state. */
-	state->screen_num = -1;
-	state->crtc_num = NULL;
+	*state = malloc(sizeof(randr_state_t));
+	if (*state == NULL) return -1;
 
-	state->crtc_num_count = 0;
-	state->crtc_count = 0;
-	state->crtcs = NULL;
+	randr_state_t *s = *state;
+	s->screen_num = -1;
+	s->crtc_num = NULL;
 
-	state->preserve = 0;
+	s->crtc_num_count = 0;
+	s->crtc_count = 0;
+	s->crtcs = NULL;
 
 	xcb_generic_error_t *error;
 
 	/* Open X server connection */
-	state->conn = xcb_connect(NULL, &state->preferred_screen);
+	s->conn = xcb_connect(NULL, &s->preferred_screen);
 
 	/* Query RandR version */
 	xcb_randr_query_version_cookie_t ver_cookie =
-		xcb_randr_query_version(state->conn, RANDR_VERSION_MAJOR,
+		xcb_randr_query_version(s->conn, RANDR_VERSION_MAJOR,
 					RANDR_VERSION_MINOR);
 	xcb_randr_query_version_reply_t *ver_reply =
-		xcb_randr_query_version_reply(state->conn, ver_cookie, &error);
+		xcb_randr_query_version_reply(s->conn, ver_cookie, &error);
 
 	/* TODO What does it mean when both error and ver_reply is NULL?
 	   Apparently, we have to check both to avoid seg faults. */
@@ -73,7 +93,8 @@ randr_init(randr_state_t *state)
 		int ec = (error != 0) ? error->error_code : -1;
 		fprintf(stderr, _("`%s' returned error %d\n"),
 			"RANDR Query Version", ec);
-		xcb_disconnect(state->conn);
+		xcb_disconnect(s->conn);
+		free(s);
 		return -1;
 	}
 
@@ -82,7 +103,8 @@ randr_init(randr_state_t *state)
 		fprintf(stderr, _("Unsupported RANDR version (%u.%u)\n"),
 			ver_reply->major_version, ver_reply->minor_version);
 		free(ver_reply);
-		xcb_disconnect(state->conn);
+		xcb_disconnect(s->conn);
+		free(s);
 		return -1;
 	}
 
@@ -91,7 +113,7 @@ randr_init(randr_state_t *state)
 	return 0;
 }
 
-int
+static int
 randr_start(randr_state_t *state)
 {
 	xcb_generic_error_t *error;
@@ -228,7 +250,7 @@ randr_start(randr_state_t *state)
 	return 0;
 }
 
-void
+static void
 randr_restore(randr_state_t *state)
 {
 	xcb_generic_error_t *error;
@@ -257,7 +279,7 @@ randr_restore(randr_state_t *state)
 	}
 }
 
-void
+static void
 randr_free(randr_state_t *state)
 {
 	/* Free CRTC state */
@@ -269,9 +291,11 @@ randr_free(randr_state_t *state)
 
 	/* Close connection */
 	xcb_disconnect(state->conn);
+
+	free(state);
 }
 
-void
+static void
 randr_print_help(FILE *f)
 {
 	fputs(_("Adjust gamma ramps with the X RANDR extension.\n"), f);
@@ -280,14 +304,13 @@ randr_print_help(FILE *f)
 	/* TRANSLATORS: RANDR help output
 	   left column must not be translated */
 	fputs(_("  screen=N\t\tX screen to apply adjustments to\n"
-		"  crtc=N\tList of comma separated CRTCs to apply adjustments to\n"
-		"  preserve={0,1}\tWhether existing gamma should be"
-		" preserved\n"),
+		"  crtc=N\tList of comma separated CRTCs to apply"
+		" adjustments to\n"),
 	      f);
 	fputs("\n", f);
 }
 
-int
+static int
 randr_set_option(randr_state_t *state, const char *key, const char *value)
 {
 	if (strcasecmp(key, "screen") == 0) {
@@ -338,7 +361,10 @@ randr_set_option(randr_state_t *state, const char *key, const char *value)
 			}
 		}
 	} else if (strcasecmp(key, "preserve") == 0) {
-		state->preserve = atoi(value);
+		fprintf(stderr, _("Parameter `%s` is now always on; "
+				  " Use the `%s` command-line option"
+				  " to disable.\n"),
+			key, "-P");
 	} else {
 		fprintf(stderr, _("Unknown method parameter: `%s'.\n"), key);
 		return -1;
@@ -348,8 +374,9 @@ randr_set_option(randr_state_t *state, const char *key, const char *value)
 }
 
 static int
-randr_set_temperature_for_crtc(randr_state_t *state, int crtc_num,
-			       const color_setting_t *setting)
+randr_set_temperature_for_crtc(
+	randr_state_t *state, int crtc_num, const color_setting_t *setting,
+	int preserve)
 {
 	xcb_generic_error_t *error;
 
@@ -380,7 +407,7 @@ randr_set_temperature_for_crtc(randr_state_t *state, int crtc_num,
 	uint16_t *gamma_g = &gamma_ramps[1*ramp_size];
 	uint16_t *gamma_b = &gamma_ramps[2*ramp_size];
 
-	if (state->preserve) {
+	if (preserve) {
 		/* Initialize gamma ramps from saved state */
 		memcpy(gamma_ramps, state->crtcs[crtc_num].saved_ramps,
 		       3*ramp_size*sizeof(uint16_t));
@@ -416,9 +443,9 @@ randr_set_temperature_for_crtc(randr_state_t *state, int crtc_num,
 	return 0;
 }
 
-int
-randr_set_temperature(randr_state_t *state,
-		      const color_setting_t *setting)
+static int
+randr_set_temperature(
+	randr_state_t *state, const color_setting_t *setting, int preserve)
 {
 	int r;
 
@@ -426,17 +453,29 @@ randr_set_temperature(randr_state_t *state,
 	   set temperature on all CRTCs. */
 	if (state->crtc_num_count == 0) {
 		for (int i = 0; i < state->crtc_count; i++) {
-			r = randr_set_temperature_for_crtc(state, i,
-							   setting);
+			r = randr_set_temperature_for_crtc(
+				state, i, setting, preserve);
 			if (r < 0) return -1;
 		}
 	} else {
 		for (int i = 0; i < state->crtc_num_count; ++i) {
 			r = randr_set_temperature_for_crtc(
-				state, state->crtc_num[i], setting);
+				state, state->crtc_num[i], setting, preserve);
 			if (r < 0) return -1;
 		}
 	}
 
 	return 0;
 }
+
+
+const gamma_method_t randr_gamma_method = {
+	"randr", 1,
+	(gamma_method_init_func *)randr_init,
+	(gamma_method_start_func *)randr_start,
+	(gamma_method_free_func *)randr_free,
+	(gamma_method_print_help_func *)randr_print_help,
+	(gamma_method_set_option_func *)randr_set_option,
+	(gamma_method_restore_func *)randr_restore,
+	(gamma_method_set_temperature_func *)randr_set_temperature
+};

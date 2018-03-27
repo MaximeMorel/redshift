@@ -18,14 +18,30 @@ Build status
 ------------
 
 [![Build Status](https://travis-ci.org/jonls/redshift.svg?branch=master)](https://travis-ci.org/jonls/redshift)
-
-Building from source
---------------------
-
-See the file [HACKING](HACKING.md) for more details on building from source.
+[![Build Status](https://ci.appveyor.com/api/projects/status/github/jonls/redshift?branch=master&svg=true)](https://ci.appveyor.com/project/jonls/redshift)
 
 FAQ
 ---
+
+**How do I install Redshift?**
+
+Use the packages provided by your distribution, e.g. for Ubuntu:
+`apt-get install redshift` or `apt-get install redshift-gtk`. For developers,
+please see _Building from source_ and _Latest builds from master branch_ below.
+
+**How do I setup a configuration file?**
+
+A configuration file is not required but is useful for saving custom
+configurations and manually defining the location in case of issues with the
+automatic location provider. An example configuration can be found in
+[redshift.conf.sample](redshift.conf.sample).
+
+The configuration file should be saved in the following location depending on
+the platform:
+
+- Linux/macOS: `~/.config/redshift.conf`.
+- Windows: Put `redshift.conf` in `%USERPROFILE%\AppData\Local\`
+    (aka `%localappdata%`).
 
 **Where can I find my coordinates to put in the configuration file?**
 
@@ -33,6 +49,18 @@ There are multiple web sites that provide coordinates for map locations, for
 example clicking anywhere on Google Maps will bring up a box with the
 coordinates. Remember that longitudes in the western hemisphere (e.g. the
 Americas) must be provided to Redshift as negative numbers.
+
+**Why does GeoClue fail with access denied error?**
+
+It is possible that the location services have been disabled completely. The
+check for this case varies by desktop environment. For example, in GNOME the
+location services can be toggled in Settings > Privacy > Location Services.
+
+If this is not the case, it is possible that Redshift has been improperly
+installed or not been given the required permissions to obtain location
+updates from a system administrator. See
+https://github.com/jonls/redshift/issues/318 for further discussion on this
+issue.
 
 **Why doesn't Redshift work on my Chromebook/Raspberry Pi?**
 
@@ -45,13 +73,13 @@ adjustments to the gamma ramp.
 Redshift has a brightness adjustment setting but it does not work the way most
 people might expect. In fact it is a fake brightness adjustment obtained by
 manipulating the gamma ramps which means that it does not reduce the backlight
-of the screen. Preferable only use it if your normal backlight adjustment is
+of the screen. Preferably only use it if your normal backlight adjustment is
 too coarse-grained.
 
 **Why doesn't Redshift work on Wayland (e.g. Fedora 25)?**
 
 The Wayland protocol does not support Redshift. There is currently no way for
-Redshift adjust the color temperature in Wayland.
+Redshift to adjust the color temperature in Wayland.
 
 **Why doesn't Redshift work on Ubuntu with Mir enabled?**
 
@@ -91,7 +119,14 @@ Please go to [the issue tracker](https://github.com/jonls/redshift/issues) and
 check if your issue has already been reported. If not, please open a new issue
 describing you problem.
 
-Donations
----------
+Latest builds from master branch
+--------------------------------
 
-[![Flattr](http://api.flattr.com/button/flattr-badge-large.png)](https://flattr.com/thing/57936/Redshift)
+- [Ubuntu PPA](https://launchpad.net/~dobey/+archive/ubuntu/redshift-daily/+packages) (`sudo add-apt-repository ppa:dobey/redshift-daily`)
+- [Windows x86_64](https://ci.appveyor.com/api/projects/jonls/redshift/artifacts/redshift-windows-x86_64.zip?branch=master&job=Environment%3A+arch%3Dx86_64&pr=false)
+- [Windows x86](https://ci.appveyor.com/api/projects/jonls/redshift/artifacts/redshift-windows-i686.zip?branch=master&job=Environment%3A+arch%3Di686&pr=false)
+
+Building from source
+--------------------
+
+See the file [CONTRIBUTING](CONTRIBUTING.md) for more details on building from source.
