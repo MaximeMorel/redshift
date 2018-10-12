@@ -26,6 +26,8 @@ appindicator module isn't present it will fall back to a GTK status icon.
 import sys
 import signal
 import gettext
+import dbus
+from dbus.mainloop.glib import DBusGMainLoop
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -44,6 +46,11 @@ from . import utils
 
 _ = gettext.gettext
 
+def on_dbus_reply(arg):
+    None
+
+def on_dbus_error(err):
+    print('on_dbus_error:', err)
 
 class RedshiftStatusIcon(object):
     """The status icon tracking the RedshiftController."""
@@ -134,8 +141,29 @@ class RedshiftStatusIcon(object):
         self.temperature_label = Gtk.Label()
         self.temperature_label.set_alignment(0.0, 0.5)
         self.temperature_label.set_padding(6, 6)
+        self.temperature_label.set_width_chars(40);
         content_area.pack_start(self.temperature_label, True, True, 0)
         self.temperature_label.show()
+
+        self.temperature_scale = Gtk.HScale()
+        self.temperature_scale.set_range(-5000, 5000)
+        self.temperature_scale.set_digits(0)
+        content_area.pack_start(self.temperature_scale, True, True, 0)
+        self.temperature_scale.connect('change-value', self.temperature_scale_cb)
+        self.temperature_scale.show()
+
+        self.brightness_label = Gtk.Label()
+        self.brightness_label.set_alignment(0.0, 0.5)
+        self.brightness_label.set_padding(6, 6)
+        content_area.pack_start(self.brightness_label, True, True, 0)
+        self.brightness_label.show()
+
+        self.brightness_scale = Gtk.HScale()
+        self.brightness_scale.set_range(-100, 100)
+        self.brightness_scale.set_digits(0)
+        content_area.pack_start(self.brightness_scale, True, True, 0)
+        self.brightness_scale.connect('change-value', self.brightness_scale_cb)
+        self.brightness_scale.show()
 
         self.period_label = Gtk.Label()
         self.period_label.set_alignment(0.0, 0.5)
@@ -151,8 +179,8 @@ class RedshiftStatusIcon(object):
         # Setup signals to property changes
         self._controller.connect('inhibit-changed', self.inhibit_change_cb)
         self._controller.connect('period-changed', self.period_change_cb)
-        self._controller.connect(
-            'temperature-changed', self.temperature_change_cb)
+        self._controller.connect('temperature-changed', self.temperature_change_cb)
+        self._controller.connect('brightness-changed', self.brightness_change_cb)
         self._controller.connect('location-changed', self.location_change_cb)
         self._controller.connect('error-occured', self.error_occured_cb)
         self._controller.connect('stopped', self.controller_stopped_cb)
@@ -160,7 +188,8 @@ class RedshiftStatusIcon(object):
         # Set info box text
         self.change_inhibited(self._controller.inhibited)
         self.change_period(self._controller.period)
-        self.change_temperature(self._controller.temperature)
+        self.change_temperature(self._controller.temperature, self._controller.temperature_offset)
+        self.change_brightness(self._controller.brightness, self._controller.brightness_offset)
         self.change_location(self._controller.location)
 
         if appindicator:
@@ -176,6 +205,48 @@ class RedshiftStatusIcon(object):
 
         # Initialize suspend timer
         self.suspend_timer = None
+        self.dbus_loop = DBusGMainLoop()
+        self.dbusInit = False
+
+    def set_dbus_value_offset(self, type, val):
+        """type == 0 means temperature, type == 1 means brightness"""
+        if self._controller.inhibited == False:
+            if self.dbusInit == True:
+                try:
+                    #print("setValueOffsetMethod ", type, val)
+                    self.setValueOffsetMethod(type, val, reply_handler=on_dbus_reply, error_handler=on_dbus_error)
+                except BaseException as err:
+                    print("DBus call method error: ", err)
+                    self.dbusInit = False
+                    pass
+            else:
+                try:
+                    self.session_bus = dbus.SessionBus(mainloop=self.dbus_loop)
+                    self.dbusProxy = self.session_bus.get_object('dk.jonls.redshift', '/dk/jonls/redshift', introspect=False)
+                    self.setValueOffsetMethod = self.dbusProxy.get_dbus_method('setValueOffset', 'dk.jonls.redshift')
+                    self.dbusInit = True
+                    print("Open DBus interface")
+                except dbus.DBusException as err:
+                    print("DBus error: ", err)
+                    pass
+
+    def temperature_scale_cb(self, range, scroll, value):
+        if value < -5000:
+            value = -5000
+        if value > 5000:
+            value = 5000
+        self._controller._temperature_offset = int(value)
+        self._controller.emit('temperature-changed', self._controller.temperature, self._controller.temperature_offset)
+        self.set_dbus_value_offset(0, self._controller._temperature_offset)
+
+    def brightness_scale_cb(self, range, scroll, value):
+        if value < -100:
+            value = -100
+        if value > 100:
+            value = 100
+        self._controller._brightness_offset = int(value)
+        self._controller.emit('brightness-changed', self._controller.brightness, self._controller.brightness_offset)
+        self.set_dbus_value_offset(1, self._controller._brightness_offset)
 
     def remove_suspend_timer(self):
         """Disable any previously set suspend timer."""
@@ -232,10 +303,6 @@ class RedshiftStatusIcon(object):
         """Callback when the info dialog should be presented."""
         self.info_dialog.show()
 
-    def response_info_cb(self, widget, data=None):
-        """Callback when a button in the info dialog was activated."""
-        self.info_dialog.hide()
-
     def close_info_dialog_cb(self, widget, data=None):
         """Callback when the info dialog is closed."""
         self.info_dialog.hide()
@@ -267,9 +334,13 @@ class RedshiftStatusIcon(object):
         """Callback when controller changes period."""
         self.change_period(period)
 
-    def temperature_change_cb(self, controller, temperature):
+    def temperature_change_cb(self, controller, temperature, temperature_offset):
         """Callback when controller changes temperature."""
-        self.change_temperature(temperature)
+        self.change_temperature(temperature, temperature_offset)
+
+    def brightness_change_cb(self, controller, brightness, brightness_offset):
+        """Callback when controller changes brightness"""
+        self.change_brightness(brightness, brightness_offset)
 
     def location_change_cb(self, controller, lat, lon):
         """Callback when controlled changes location."""
@@ -300,11 +371,15 @@ class RedshiftStatusIcon(object):
             _('<b>Status:</b> {}').format(
                 _('Disabled') if inhibited else _('Enabled')))
 
-    def change_temperature(self, temperature):
+    def change_temperature(self, temperature, temperature_offset):
         """Change interface to new temperature."""
-        self.temperature_label.set_markup(
-            '<b>{}:</b> {}K'.format(_('Color temperature'), temperature))
-        self.update_tooltip_text()
+        sign = ('', '+')[temperature_offset >= 0]
+        self.temperature_label.set_markup('<b>{}:</b> {}K ({}{}K)'.format(_('Color temperature'), temperature, sign, temperature_offset))
+
+    def change_brightness(self, brightness, brightness_offset):
+        """Change interface to new brightness"""
+        sign = ('', '+')[brightness_offset >= 0]
+        self.brightness_label.set_markup('<b>{}:</b> {}% ({}{}%)'.format(_('Brightness'), brightness, sign, brightness_offset))
 
     def change_period(self, period):
         """Change interface to new period."""

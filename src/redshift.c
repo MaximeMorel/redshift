@@ -28,6 +28,7 @@
 #include <math.h>
 #include <locale.h>
 #include <errno.h>
+#include <dbus/dbus.h>
 
 /* poll.h is not available on Windows but there is no Windows location provider
    using polling. On Windows, we just define some stubs to make things compile.
@@ -128,7 +129,6 @@ int poll(struct pollfd *fds, int nfds, int timeout) { abort(); return -1; }
 /* Length of fade in numbers of short sleep durations. */
 #define FADE_LENGTH  40
 
-
 /* Names of periods of day */
 static const char *period_names[] = {
 	/* TRANSLATORS: Name printed when period of day is unknown */
@@ -137,6 +137,11 @@ static const char *period_names[] = {
 	N_("Night"),
 	N_("Transition")
 };
+
+typedef struct {
+	DBusConnection* connection;
+	const char* busName;
+} dbus_context_t;
 
 
 /* Determine which period we are currently in based on time offset. */
@@ -592,6 +597,143 @@ ease_fade(double t)
 		-6.4041738958415664 * exp(-7.2908241330981340 * t));
 }
 
+int initDBus(dbus_context_t* dbusCtx)
+{
+	DBusError error;
+
+	dbusCtx->busName = "dk.jonls.redshift";
+	dbus_error_init(&error);
+	dbusCtx->connection = dbus_bus_get(DBUS_BUS_SESSION, &error);
+	if (dbus_error_is_set(&error))
+	{
+		printf("Error connecting to the daemon bus: %s", error.message);
+		dbus_error_free(&error);
+		return 1;
+	}
+
+	dbus_bool_t ret = dbus_bus_name_has_owner(dbusCtx->connection, dbusCtx->busName, &error);
+	if (dbus_error_is_set(&error))
+	{
+		dbus_error_free(&error);
+		printf("DBus Error: %s\n",error.message);
+		return 1;
+	}
+
+	if (ret == FALSE)
+	{
+		printf("Bus name %s doesn't have an owner, reserving it...\n", dbusCtx->busName);
+		int request_name_reply = dbus_bus_request_name(dbusCtx->connection, dbusCtx->busName, DBUS_NAME_FLAG_DO_NOT_QUEUE, &error);
+		if (dbus_error_is_set(&error))
+		{
+			dbus_error_free(&error);
+			printf("Error requesting a bus name: %s\n",error.message);
+			return 1;
+		}
+		if (request_name_reply == DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER)
+		{
+			printf("Bus name %s Successfully reserved!\n", dbusCtx->busName);
+			return 0;
+		}
+		else
+		{
+			printf("Failed to reserve name %s\n",dbusCtx->busName);
+			return 1;
+		}
+	}
+	else
+	/* if ret of method dbus_bus_name_has_owner is TRUE, then this is useful for
+	detecting if your application is already running and had reserved a bus name
+	unless somebody stole this name from you, so better to choose a correct bus name */
+	{
+		printf("%s is already reserved\n", dbusCtx->busName);
+		return 1;
+	}
+	return 0;
+}
+
+int dbusSetValueOffset(DBusMessage* msg, DBusConnection* conn, int* type, int* value)
+{
+	int success = 0;
+	DBusMessageIter args;
+	DBusMessage* reply;
+	int ret = 1;
+	dbus_uint32_t serial = 0;
+
+	// read the arguments
+	if (!dbus_message_iter_init(msg, &args))
+	{
+		fprintf(stderr, "Message has no arguments!\n");
+	}
+	else
+	{
+		if (dbus_message_iter_get_arg_type(&args) == DBUS_TYPE_INT32)
+		{
+			dbus_message_iter_get_basic(&args, type);
+			dbus_message_iter_next(&args);
+
+			if (dbus_message_iter_get_arg_type(&args) == DBUS_TYPE_INT32)
+			{
+				dbus_message_iter_get_basic(&args, value);
+				success = 1;
+			}
+			else
+			{
+				fprintf(stderr, "2nd argument is not int32!\n");
+			}
+		}
+		else
+		{
+			fprintf(stderr, "1st argument is not int32!\n");
+		}
+	}
+
+	// create a reply from the message
+	reply = dbus_message_new_method_return(msg);
+
+	// add the arguments to the reply
+	dbus_message_iter_init_append(reply, &args);
+	if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_INT32, &ret)) {
+		fprintf(stderr, "Out Of Memory!\n");
+		success = 0;
+	}
+
+	// send the reply && flush the connection
+	if (!dbus_connection_send(conn, reply, &serial)) {
+		fprintf(stderr, "Out Of Memory!\n");
+		success = 0;
+	}
+	dbus_connection_flush(conn);
+
+	// free the reply
+	dbus_message_unref(reply);
+
+	//printf("val: %d\n", param);
+	return success;
+}
+
+int checkDBusValueOffset(dbus_context_t* dbusCtx, int* type, int* value)
+{
+	int success = 0;
+	// non blocking read of the next available message
+	dbus_connection_read_write(dbusCtx->connection, 0);
+	DBusMessage* msg = dbus_connection_pop_message(dbusCtx->connection);
+	if (msg)
+	{
+		// check this is a method call for the right interface & method
+		if (dbus_message_is_method_call(msg, dbusCtx->busName, "setValueOffset"))
+			success = dbusSetValueOffset(msg, dbusCtx->connection, type, value);
+
+		// free the message
+		dbus_message_unref(msg);
+	}
+	return success;
+}
+
+int exitDBus(dbus_context_t* dbusCtx)
+{
+	dbus_connection_unref(dbusCtx->connection);
+	return 0;
+}
 
 /* Run continual mode loop
    This is the main loop of the continual mode which keeps track of the
@@ -603,7 +745,8 @@ run_continual_mode(const location_provider_t *provider,
 		   const transition_scheme_t *scheme,
 		   const gamma_method_t *method,
 		   gamma_state_t *method_state,
-		   int use_fade, int preserve_gamma, int verbose)
+		   int use_fade, int preserve_gamma, int verbose,
+		   dbus_context_t* dbusCtx)
 {
 	int r;
 
@@ -611,6 +754,9 @@ run_continual_mode(const location_provider_t *provider,
 	int fade_length = 0;
 	int fade_time = 0;
 	color_setting_t fade_start_interp;
+
+	int temperature_offset = 0;
+	float brightness_offset = 0.0f;
 
 	r = signals_install_handlers();
 	if (r < 0) {
@@ -721,6 +867,8 @@ run_continual_mode(const location_provider_t *provider,
 		color_setting_t target_interp;
 		interpolate_transition_scheme(
 			scheme, transition_prog, &target_interp);
+		target_interp.temperature += temperature_offset;
+		target_interp.brightness += brightness_offset;
 
 		if (disabled) {
 			period = PERIOD_NONE;
@@ -743,6 +891,23 @@ run_continual_mode(const location_provider_t *provider,
 		/* Activate hooks if period changed */
 		if (period != prev_period) {
 			hooks_signal_period_change(prev_period, period);
+		}
+
+		int type = -1;
+		int value = -1;
+		int success = checkDBusValueOffset(dbusCtx, &type, &value);
+		if (success) {
+			if (type == 0) {
+				temperature_offset = value;
+			}
+			else if (type == 1) {
+				brightness_offset = value * 0.01f;
+			}
+			if (type == 0 || type == 1) {
+				fade_length = FADE_LENGTH / 10; // faster manual fade
+				fade_time = 0;
+				fade_start_interp = interp;
+			}
 		}
 
 		/* Start fade if the parameter differences are too big to apply
@@ -780,19 +945,19 @@ run_continual_mode(const location_provider_t *provider,
 			interp = target_interp;
 		}
 
+
+		interp.temperature = CLAMP(1500, interp.temperature, 8500);
+		interp.brightness = CLAMP(0.1f, interp.brightness, 1.0f);
+
 		/* Break loop when done and final fade is over */
 		if (done && fade_length == 0) break;
 
 		if (verbose) {
-			if (prev_target_interp.temperature !=
-			    target_interp.temperature) {
+			if (fade_time != 0) {
 				printf(_("Color temperature: %uK\n"),
-				       target_interp.temperature);
-			}
-			if (prev_target_interp.brightness !=
-			    target_interp.brightness) {
+				       interp.temperature);
 				printf(_("Brightness: %.2f\n"),
-				       target_interp.brightness);
+				       interp.brightness);
 			}
 		}
 
@@ -1087,7 +1252,7 @@ main(int argc, char *argv[])
 	}
 
 	if (options.verbose) {
-		printf(_("Brightness: %.2f:%.2f\n"),
+		printf(_("Brightness day:night: %.2f:%.2f\n"),
 		       options.scheme.day.brightness,
 		       options.scheme.night.brightness);
 	}
@@ -1156,6 +1321,9 @@ main(int argc, char *argv[])
 	}
 
 	config_ini_free(&config_state);
+
+	dbus_context_t dbusCtx;
+	initDBus(&dbusCtx);
 
 	switch (options.mode) {
 	case PROGRAM_MODE_ONE_SHOT:
@@ -1303,11 +1471,13 @@ main(int argc, char *argv[])
 			options.provider, location_state, scheme,
 			options.method, method_state,
 			options.use_fade, options.preserve_gamma,
-			options.verbose);
+			options.verbose, &dbusCtx);
 		if (r < 0) exit(EXIT_FAILURE);
 	}
 	break;
 	}
+
+	exitDBus(&dbusCtx);
 
 	/* Clean up gamma adjustment state */
 	if (options.mode != PROGRAM_MODE_PRINT) {
